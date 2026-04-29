@@ -6,6 +6,7 @@
 <title>Ajiks Akademi — Jasmani Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,600;0,700;0,800;0,900;1,700;1,900&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -258,6 +259,7 @@ tbody tr:last-child td{border-bottom:none}
   <div class="nav-right">
     <button class="btn btn-outline" onclick="openModal()">+ Input Data</button>
     <button class="btn btn-fire">Cetak Rapor</button>
+    <button class="btn btn-outline" onclick="setupSupabaseConfig()" title="Konfigurasi Supabase">⚡ Setup DB</button>
   </div>
 </nav>
 
@@ -585,8 +587,180 @@ tbody tr:last-child td{border-bottom:none}
 </div>
 
 <script>
+// SUPABASE CONFIGURATION
+// Get these from your Supabase project dashboard: https://supabase.com
+const SUPABASE_CONFIG = {
+  URL: localStorage.getItem('SUPABASE_URL') || 'https://your-project.supabase.co',
+  KEY: localStorage.getItem('SUPABASE_KEY') || 'your-anon-key'
+};
+
+let supabase = null;
+let isSupabaseReady = false;
+
+// Initialize Supabase client
+if (SUPABASE_CONFIG.URL && SUPABASE_CONFIG.URL !== 'https://your-project.supabase.co') {
+  try {
+    supabase = window.supabase.createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.KEY);
+    isSupabaseReady = true;
+    console.log('✅ Supabase connected');
+  } catch (error) {
+    console.error('❌ Supabase initialization failed:', error);
+    isSupabaseReady = false;
+  }
+} else {
+  console.warn('⚠️ Supabase not configured. Data will be stored locally only.');
+}
+
+// Helper function to save member to Supabase
+async function saveMemberToSupabase(member) {
+  if (!isSupabaseReady || !supabase) {
+    console.log('ℹ️ Supabase not available, data saved locally only');
+    return { success: true, local: true };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('members')
+      .insert([{
+        id: member.id,
+        name: member.name,
+        gender: member.gender,
+        weight_init: member.weightInit,
+        weight_now: member.weightNow,
+        height: member.height,
+        latest: member.latest,
+        created_at: new Date().toISOString()
+      }]);
+
+    if (error) {
+      console.error('❌ Error saving to Supabase:', error);
+      return { success: false, error };
+    }
+
+    console.log('✅ Saved to Supabase');
+    return { success: true, data };
+  } catch (error) {
+    console.error('❌ Exception saving to Supabase:', error);
+    return { success: false, error };
+  }
+}
+
+// Helper function to load members from Supabase
+async function loadMembersFromSupabase() {
+  if (!isSupabaseReady || !supabase) {
+    console.log('ℹ️ Loading data from local storage');
+    return [];
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('members')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('❌ Error loading from Supabase:', error);
+      return [];
+    }
+
+    if (data && data.length > 0) {
+      console.log('✅ Loaded', data.length, 'members from Supabase');
+      return data.map(m => ({
+        id: m.id,
+        name: m.name,
+        gender: m.gender,
+        weightInit: m.weight_init,
+        weightNow: m.weight_now,
+        height: m.height,
+        latest: m.latest || { run12: 0, fig8: 0, pushup: 0, situp: 0, pullup: 0 }
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.error('❌ Exception loading from Supabase:', error);
+    return [];
+  }
+}
+
+// Helper function to update member in Supabase
+async function updateMemberInSupabase(member) {
+  if (!isSupabaseReady || !supabase) {
+    console.log('ℹ️ Supabase not available, update saved locally only');
+    return { success: true, local: true };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('members')
+      .update({
+        name: member.name,
+        gender: member.gender,
+        weight_now: member.weightNow,
+        height: member.height,
+        latest: member.latest
+      })
+      .eq('id', member.id);
+
+    if (error) {
+      console.error('❌ Error updating in Supabase:', error);
+      return { success: false, error };
+    }
+
+    console.log('✅ Updated in Supabase');
+    return { success: true, data };
+  } catch (error) {
+    console.error('❌ Exception updating in Supabase:', error);
+    return { success: false, error };
+  }
+}
+
+// Helper function to delete member from Supabase
+async function deleteMemberFromSupabase(memberId) {
+  if (!isSupabaseReady || !supabase) {
+    console.log('ℹ️ Supabase not available, deletion saved locally only');
+    return { success: true, local: true };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('members')
+      .delete()
+      .eq('id', memberId);
+
+    if (error) {
+      console.error('❌ Error deleting from Supabase:', error);
+      return { success: false, error };
+    }
+
+    console.log('✅ Deleted from Supabase');
+    return { success: true, data };
+  } catch (error) {
+    console.error('❌ Exception deleting from Supabase:', error);
+    return { success: false, error };
+  }
+}
+
+// Configuration dialog for Supabase credentials
+function setupSupabaseConfig() {
+  const urlInput = prompt('Enter your Supabase URL:\n(https://your-project.supabase.co)',
+                          localStorage.getItem('SUPABASE_URL') || '');
+
+  if (urlInput === null) return; // User cancelled
+
+  const keyInput = prompt('Enter your Supabase Anon Key:\n(Found in Settings > API)',
+                          localStorage.getItem('SUPABASE_KEY') || '');
+
+  if (keyInput === null) return; // User cancelled
+
+  localStorage.setItem('SUPABASE_URL', urlInput);
+  localStorage.setItem('SUPABASE_KEY', keyInput);
+
+  alert('✅ Supabase configuration saved. Please refresh the page.');
+  location.reload();
+}
+
 // DATA SETUP
-const MEMBERS = [
+let MEMBERS = [
   {id:'M001',name:'Ahmad Kafir',gender:'L',weightInit:68,weightNow:65,height:170,
    latest:{run12:2950,fig8:17.2,pushup:34,situp:40,pullup:12}},
   {id:'M002',name:'Siti Nuraini',gender:'P',weightInit:55,weightNow:53,height:158,
@@ -1400,49 +1574,49 @@ function closeAddMemberModal(){
   console.log('Modal closed and reset to Add mode');
 }
 
-function saveNewMember(){
+async function saveNewMember(){
   console.log('=== SAVE NEW MEMBER ===');
-  
+
   const name=document.getElementById('newMemberName').value.trim();
   const gender=document.getElementById('newMemberGender').value;
   const weight=parseFloat(document.getElementById('newMemberWeight').value);
   const height=parseFloat(document.getElementById('newMemberHeight').value);
-  
+
   console.log('Form data:',{name,gender,weight,height});
-  
+
   // Validation
   if(!name){
     alert('⚠️ Nama anggota tidak boleh kosong');
     return;
   }
-  
+
   if(name.length<3){
     alert('⚠️ Nama minimal 3 karakter');
     return;
   }
-  
+
   if(isNaN(weight) || weight<=0){
     alert('⚠️ Berat badan harus angka positif');
     return;
   }
-  
+
   if(isNaN(height) || height<=0){
     alert('⚠️ Tinggi badan harus angka positif');
     return;
   }
-  
+
   if(weight>200 || height>250){
     alert('⚠️ Data tidak valid. Cek kembali berat (max 200kg) dan tinggi (max 250cm)');
     return;
   }
-  
+
   // Check duplicate name
   const isDuplicate=MEMBERS.some(m=>m.name.toLowerCase()===name.toLowerCase());
   if(isDuplicate){
     alert('⚠️ Nama anggota "'+name+'" sudah terdaftar. Gunakan nama yang berbeda');
     return;
   }
-  
+
   // Create new member
   const newId='M'+String(MEMBERS.length+1).padStart(3,'0');
   const newMember={
@@ -1454,16 +1628,24 @@ function saveNewMember(){
     height:height,
     latest:{run12:0,fig8:0,pushup:0,situp:0,pullup:0}
   };
-  
+
   console.log('Creating new member:',newMember);
   MEMBERS.push(newMember);
   console.log('✅ Member added. Total members now:',MEMBERS.length);
   console.log('All members:',MEMBERS.map(m=>({id:m.id,name:m.name})));
-  
+
+  // Save to Supabase
+  const saveResult = await saveMemberToSupabase(newMember);
+
   closeAddMemberModal();
   renderMembersList();
-  alert('✅ Anggota "'+name+'" berhasil ditambahkan!\n\nID: '+newId+'\nTotal anggota: '+MEMBERS.length);
-  
+
+  if (saveResult.success) {
+    alert('✅ Anggota "'+name+'" berhasil ditambahkan!\n\nID: '+newId+'\nTotal anggota: '+MEMBERS.length + (saveResult.local ? '\n⚠️ (Hanya tersimpan lokal)' : '\n📊 (Tersimpan ke Supabase)'));
+  } else {
+    alert('⚠️ Anggota ditambahkan lokal, tapi gagal menyimpan ke Supabase.\nPastikan Supabase sudah dikonfigurasi dengan benar.');
+  }
+
   console.log('=== NEW MEMBER SAVED ===');
 }
 
@@ -1550,20 +1732,20 @@ function editMember(id){
   openAddMemberModal();
 }
 
-function updateMemberData(id){
+async function updateMemberData(id){
   console.log('Updating member ID:',id);
-  
+
   const member=MEMBERS.find(m=>m.id===id);
   if(!member){
     alert('❌ Anggota tidak ditemukan');
     return;
   }
-  
+
   const newName=document.getElementById('newMemberName').value.trim();
   const newGender=document.getElementById('newMemberGender').value;
   const newWeight=parseFloat(document.getElementById('newMemberWeight').value);
   const newHeight=parseFloat(document.getElementById('newMemberHeight').value);
-  
+
   // Validation
   if(!newName){
     alert('⚠️ Nama tidak boleh kosong');
@@ -1581,63 +1763,74 @@ function updateMemberData(id){
     alert('⚠️ Tinggi badan tidak valid (1-250 cm)');
     return;
   }
-  
+
   // Check for duplicate name (excluding current member)
   const isDuplicate=MEMBERS.some(m=>m.id!==id && m.name.toLowerCase()===newName.toLowerCase());
   if(isDuplicate){
     alert('⚠️ Nama sudah terdaftar. Gunakan nama lain');
     return;
   }
-  
+
   // Update member
   member.name=newName;
   member.gender=newGender;
   member.weightNow=newWeight;
   member.height=newHeight;
-  
+
   console.log('✅ Member updated:',member);
-  
+
+  // Save to Supabase
+  const updateResult = await updateMemberInSupabase(member);
+
   closeAddMemberModal();
   renderMembersList();
   selectMember(currentMember);
-  alert('✅ Data anggota "'+newName+'" berhasil diupdate');
+
+  if (updateResult.success) {
+    alert('✅ Data anggota "'+newName+'" berhasil diupdate' + (updateResult.local ? '\n⚠️ (Hanya lokal)' : '\n📊 (Tersimpan ke Supabase)'));
+  } else {
+    alert('⚠️ Data diupdate lokal, tapi gagal menyimpan ke Supabase.');
+  }
 }
 
-function deleteMember(id){
+async function deleteMember(id){
   console.log('=== DELETE MEMBER DEBUG ===');
   console.log('Deleting member ID:',id);
   console.log('Current MEMBERS array length:',MEMBERS.length);
   console.log('All members:',MEMBERS.map(m=>({id:m.id,name:m.name})));
-  
+
   // Find the member
   const memberIndex=MEMBERS.findIndex(m=>m.id===id);
   console.log('Member index found:',memberIndex);
-  
+
   if(memberIndex===-1){
     console.error('❌ Member dengan ID '+id+' tidak ditemukan di array');
     alert('❌ Anggota tidak ditemukan. Silakan refresh halaman.');
     return;
   }
-  
+
   const member=MEMBERS[memberIndex];
   console.log('Found member:',member.name,'(ID:'+member.id+')');
-  
+
   // Confirmation dialog
   const confirmed=confirm(`🗑️ Hapus anggota "${member.name}"?\n\n⚠️ Tindakan ini tidak bisa dibatalkan!`);
   console.log('User confirmed delete:',confirmed);
-  
+
   if(!confirmed){
     console.log('Delete cancelled by user');
     return;
   }
-  
+
   try {
     // Remove from array
     const removedMembers=MEMBERS.splice(memberIndex,1);
     console.log('✅ Member removed. Removed:',removedMembers[0].name);
     console.log('Remaining members:',MEMBERS.length);
     console.log('New members array:',MEMBERS.map(m=>({id:m.id,name:m.name})));
-    
+
+    // Delete from Supabase
+    const deleteResult = await deleteMemberFromSupabase(id);
+
     // Adjust currentMember index if needed
     if(currentMember>=MEMBERS.length && MEMBERS.length>0){
       const oldIndex=currentMember;
@@ -1647,15 +1840,17 @@ function deleteMember(id){
       currentMember=-1;
       console.log('No members left, set currentMember to -1');
     }
-    
+
     // Re-render everything
     console.log('Updating UI...');
     renderMembersList();
-    
+
     // Show success message
-    alert(`✅ Anggota "${member.name}" berhasil dihapus!\n\nSisa anggota: ${MEMBERS.length}`);
+    const successMsg = `✅ Anggota "${member.name}" berhasil dihapus!\n\nSisa anggota: ${MEMBERS.length}`;
+    const dbMsg = deleteResult.success ? (deleteResult.local ? '\n⚠️ (Hanya lokal)' : '\n📊 (Dihapus dari Supabase)') : '\n⚠️ (Gagal dihapus dari Supabase)';
+    alert(successMsg + dbMsg);
     console.log('=== DELETE COMPLETE ===');
-    
+
     // If members still exist, refresh dashboard
     if(MEMBERS.length>0 && currentMember>=0){
       console.log('Selecting member index:',currentMember);
@@ -1670,7 +1865,7 @@ function deleteMember(id){
         document.getElementById('dashSection').innerHTML='<p style="color:var(--text3);text-align:center;padding:20px">Pilih anggota untuk melihat data</p>';
       }
     }
-    
+
   } catch(err){
     console.error('❌ ERROR during delete:',err);
     alert('❌ Terjadi kesalahan saat menghapus anggota:\n'+err.message);
@@ -1691,16 +1886,36 @@ function exportMembers(){
   link.click();
 }
 
-// Search filter
-document.addEventListener('DOMContentLoaded',()=>{
-  const searchInput=document.getElementById('memberSearch');
-  if(searchInput){
-    searchInput.addEventListener('keyup',renderMembersList);
+// Initialization with Supabase data loading
+async function initializeApp() {
+  // Try to load from Supabase first
+  const supabaseMembers = await loadMembersFromSupabase();
+  if (supabaseMembers && supabaseMembers.length > 0) {
+    MEMBERS = supabaseMembers;
+    console.log('✅ App initialized with Supabase data');
+  } else {
+    console.log('ℹ️ App initialized with local data');
   }
-});
 
-// INIT
-renderMemberChips(); renderProfile(); renderTestCards(); renderChart('daily'); renderRadarChart(); renderReport('daily'); renderMembersList();
+  // Render UI
+  renderMemberChips();
+  renderProfile();
+  renderTestCards();
+  renderChart('daily');
+  renderRadarChart();
+  renderReport('daily');
+  renderMembersList();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('memberSearch');
+  if (searchInput) {
+    searchInput.addEventListener('keyup', renderMembersList);
+  }
+
+  // Initialize app with data loading
+  initializeApp();
+});
 </script>
 </body>
 </html>
