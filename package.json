@@ -1,0 +1,31 @@
+{
+  "name": "jasmani-tracker",
+  "version": "1.0.0",
+  "description": "JASMANI TRACKER - Physical Fitness Monitoring System for AJIKS Academy",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "test": "npm run test -w backend && npm run test -w frontend",
+    "lint": "npm run lint -w backend && npm run lint -w frontend",
+    "type-check": "npm run type-check -w backend && npm run type-check -w frontend",
+    "migrate": "npm run migrate -w backend",
+    "seed": "npm run seed -w backend",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
