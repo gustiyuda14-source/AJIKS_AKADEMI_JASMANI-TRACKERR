@@ -619,26 +619,47 @@ async function saveMemberToSupabase(member) {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('members')
+    // Save to students table
+    const { data: studentData, error: studentError } = await supabase
+      .from('students')
       .insert([{
-        id: member.id,
         name: member.name,
         gender: member.gender,
-        weight_init: member.weightInit,
-        weight_now: member.weightNow,
-        height: member.height,
-        latest: member.latest,
-        created_at: new Date().toISOString()
+        class: 'AJIKS',
+        student_id: member.id
       }]);
 
-    if (error) {
-      console.error('❌ Error saving to Supabase:', error);
-      return { success: false, error };
+    if (studentError) {
+      console.error('❌ Error saving student to Supabase:', studentError);
+      return { success: false, error: studentError };
     }
 
-    console.log('✅ Saved to Supabase');
-    return { success: true, data };
+    console.log('✅ Saved student to Supabase');
+
+    // Save physical record (test scores) if they exist
+    if (member.latest && Object.keys(member.latest).length > 0) {
+      const { data: recordData, error: recordError } = await supabase
+        .from('physical_records')
+        .insert([{
+          student_id: member.id,
+          record_date: new Date().toISOString().split('T')[0],
+          height: member.height,
+          weight: member.weightNow,
+          push_ups: member.latest.pushup || 0,
+          sit_ups: member.latest.situp || 0,
+          pull_ups: member.latest.pullup || 0,
+          run12: member.latest.run12 || 0,
+          fig8: member.latest.fig8 || 0
+        }]);
+
+      if (recordError) {
+        console.warn('⚠️ Saved student but failed to save physical record:', recordError);
+      } else {
+        console.log('✅ Saved physical record to Supabase');
+      }
+    }
+
+    return { success: true, data: studentData };
   } catch (error) {
     console.error('❌ Exception saving to Supabase:', error);
     return { success: false, error };
@@ -653,29 +674,56 @@ async function loadMembersFromSupabase() {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('members')
+    // Load students
+    const { data: students, error: studentsError } = await supabase
+      .from('students')
       .select('*')
       .order('created_at', { ascending: true });
 
-    if (error) {
-      console.error('❌ Error loading from Supabase:', error);
+    if (studentsError) {
+      console.error('❌ Error loading students from Supabase:', studentsError);
       return [];
     }
 
-    if (data && data.length > 0) {
-      console.log('✅ Loaded', data.length, 'members from Supabase');
-      return data.map(m => ({
-        id: m.id,
-        name: m.name,
-        gender: m.gender,
-        weightInit: m.weight_init,
-        weightNow: m.weight_now,
-        height: m.height,
-        latest: m.latest || { run12: 0, fig8: 0, pushup: 0, situp: 0, pullup: 0 }
-      }));
+    if (!students || students.length === 0) {
+      console.log('ℹ️ No students found in Supabase');
+      return [];
     }
-    return [];
+
+    // Load physical records for each student
+    const { data: records, error: recordsError } = await supabase
+      .from('physical_records')
+      .select('*')
+      .order('record_date', { ascending: false });
+
+    if (recordsError) {
+      console.warn('⚠️ Error loading physical records:', recordsError);
+    }
+
+    // Merge students with their latest physical records
+    const members = students.map(student => {
+      // Find latest record for this student
+      const latestRecord = records && records.find(r => r.student_id === student.id);
+
+      return {
+        id: student.id,
+        name: student.name,
+        gender: student.gender || 'L',
+        weightInit: latestRecord?.weight || 0,
+        weightNow: latestRecord?.weight || 0,
+        height: latestRecord?.height || 0,
+        latest: {
+          run12: latestRecord?.run12 || 0,
+          fig8: latestRecord?.fig8 || 0,
+          pushup: latestRecord?.push_ups || 0,
+          situp: latestRecord?.sit_ups || 0,
+          pullup: latestRecord?.pull_ups || 0
+        }
+      };
+    });
+
+    console.log('✅ Loaded', members.length, 'members from Supabase');
+    return members;
   } catch (error) {
     console.error('❌ Exception loading from Supabase:', error);
     return [];
@@ -690,24 +738,43 @@ async function updateMemberInSupabase(member) {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('members')
+    // Update student info
+    const { data: studentData, error: studentError } = await supabase
+      .from('students')
       .update({
         name: member.name,
-        gender: member.gender,
-        weight_now: member.weightNow,
-        height: member.height,
-        latest: member.latest
+        gender: member.gender
       })
       .eq('id', member.id);
 
-    if (error) {
-      console.error('❌ Error updating in Supabase:', error);
-      return { success: false, error };
+    if (studentError) {
+      console.error('❌ Error updating student in Supabase:', studentError);
+      return { success: false, error: studentError };
+    }
+
+    // Create new physical record with updated data
+    const { data: recordData, error: recordError } = await supabase
+      .from('physical_records')
+      .insert([{
+        student_id: member.id,
+        record_date: new Date().toISOString().split('T')[0],
+        height: member.height,
+        weight: member.weightNow,
+        push_ups: member.latest.pushup || 0,
+        sit_ups: member.latest.situp || 0,
+        pull_ups: member.latest.pullup || 0,
+        run12: member.latest.run12 || 0,
+        fig8: member.latest.fig8 || 0
+      }]);
+
+    if (recordError) {
+      console.warn('⚠️ Updated student but failed to save physical record:', recordError);
+    } else {
+      console.log('✅ Updated physical record');
     }
 
     console.log('✅ Updated in Supabase');
-    return { success: true, data };
+    return { success: true, data: studentData };
   } catch (error) {
     console.error('❌ Exception updating in Supabase:', error);
     return { success: false, error };
@@ -722,13 +789,24 @@ async function deleteMemberFromSupabase(memberId) {
   }
 
   try {
+    // Delete physical records first (foreign key constraint)
+    const { error: recordsError } = await supabase
+      .from('physical_records')
+      .delete()
+      .eq('student_id', memberId);
+
+    if (recordsError) {
+      console.warn('⚠️ Failed to delete physical records:', recordsError);
+    }
+
+    // Delete student
     const { data, error } = await supabase
-      .from('members')
+      .from('students')
       .delete()
       .eq('id', memberId);
 
     if (error) {
-      console.error('❌ Error deleting from Supabase:', error);
+      console.error('❌ Error deleting student from Supabase:', error);
       return { success: false, error };
     }
 
