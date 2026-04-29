@@ -6,7 +6,6 @@
 <title>Ajiks Akademi — Jasmani Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,600;0,700;0,800;0,900;1,700;1,900&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://unpkg.com/@supabase/supabase-js@2.39.0"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -587,142 +586,132 @@ tbody tr:last-child td{border-bottom:none}
 </div>
 
 <script>
-// SUPABASE CONFIGURATION
-let supabase = null;
-let isSupabaseReady = false;
+// SUPABASE REST API CONFIGURATION
+let SUPABASE_CONFIG = {
+  URL: localStorage.getItem('SUPABASE_URL') || null,
+  KEY: localStorage.getItem('SUPABASE_KEY') || null
+};
 
-// Initialize Supabase client (with retry logic)
-async function initializeSupabase() {
-  const SUPABASE_CONFIG = {
-    URL: localStorage.getItem('SUPABASE_URL') || 'https://your-project.supabase.co',
-    KEY: localStorage.getItem('SUPABASE_KEY') || 'your-anon-key'
-  };
+let isSupabaseReady = SUPABASE_CONFIG.URL && SUPABASE_CONFIG.KEY;
 
-  // Check if credentials are configured
-  if (!SUPABASE_CONFIG.URL || SUPABASE_CONFIG.URL === 'https://your-project.supabase.co') {
-    console.warn('⚠️ Supabase not configured. Data will be stored locally only.');
-    return;
-  }
-
-  // Wait for Supabase library to load (max 5 seconds)
-  let retries = 0;
-  while (!window.supabase && retries < 50) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    retries++;
-  }
-
-  if (!window.supabase) {
-    console.error('❌ Supabase library failed to load');
-    isSupabaseReady = false;
-    return;
-  }
-
-  try {
-    supabase = window.supabase.createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.KEY);
-    isSupabaseReady = true;
-    console.log('✅ Supabase connected successfully');
-  } catch (error) {
-    console.error('❌ Supabase initialization failed:', error);
-    isSupabaseReady = false;
-  }
+if (isSupabaseReady) {
+  console.log('✅ Supabase configured');
+} else {
+  console.warn('⚠️ Supabase not configured. Data will be stored locally only.');
 }
 
-// Initialize immediately
-initializeSupabase();
-
-// Helper function to save member to Supabase
+// Save member to Supabase via REST API
 async function saveMemberToSupabase(member) {
-  if (!isSupabaseReady || !supabase) {
-    console.log('ℹ️ Supabase not available, data saved locally only');
+  if (!isSupabaseReady) {
+    console.log('ℹ️ Supabase not configured, data saved locally only');
     return { success: true, local: true };
   }
 
   try {
     // Save to students table
-    const { data: studentData, error: studentError } = await supabase
-      .from('students')
-      .insert([{
+    const studentRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/students`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
         name: member.name,
         gender: member.gender,
         class: 'AJIKS',
         student_id: member.id
-      }]);
+      })
+    });
 
-    if (studentError) {
-      console.error('❌ Error saving student to Supabase:', studentError);
-      return { success: false, error: studentError };
+    if (!studentRes.ok) {
+      const error = await studentRes.text();
+      console.error('❌ Error saving student:', error);
+      return { success: false, error };
     }
 
     console.log('✅ Saved student to Supabase');
 
-    // Save physical record (test scores) if they exist
-    if (member.latest && Object.keys(member.latest).length > 0) {
-      const { data: recordData, error: recordError } = await supabase
-        .from('physical_records')
-        .insert([{
-          student_id: member.id,
-          record_date: new Date().toISOString().split('T')[0],
-          height: member.height,
-          weight: member.weightNow,
-          push_ups: member.latest.pushup || 0,
-          sit_ups: member.latest.situp || 0,
-          pull_ups: member.latest.pullup || 0,
-          run12: member.latest.run12 || 0,
-          fig8: member.latest.fig8 || 0
-        }]);
+    // Save physical record
+    const recordRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/physical_records`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
+        student_id: member.id,
+        record_date: new Date().toISOString().split('T')[0],
+        height: member.height,
+        weight: member.weightNow,
+        push_ups: member.latest.pushup || 0,
+        sit_ups: member.latest.situp || 0,
+        pull_ups: member.latest.pullup || 0,
+        run12: member.latest.run12 || 0,
+        fig8: member.latest.fig8 || 0
+      })
+    });
 
-      if (recordError) {
-        console.warn('⚠️ Saved student but failed to save physical record:', recordError);
-      } else {
-        console.log('✅ Saved physical record to Supabase');
-      }
+    if (!recordRes.ok) {
+      console.warn('⚠️ Saved student but failed to save physical record');
+    } else {
+      console.log('✅ Saved physical record to Supabase');
     }
 
-    return { success: true, data: studentData };
+    return { success: true };
   } catch (error) {
     console.error('❌ Exception saving to Supabase:', error);
     return { success: false, error };
   }
 }
 
-// Helper function to load members from Supabase
+// Load members from Supabase via REST API
 async function loadMembersFromSupabase() {
-  if (!isSupabaseReady || !supabase) {
-    console.log('ℹ️ Loading data from local storage');
+  if (!isSupabaseReady) {
+    console.log('ℹ️ Supabase not configured, using local data');
     return [];
   }
 
   try {
     // Load students
-    const { data: students, error: studentsError } = await supabase
-      .from('students')
-      .select('*')
-      .order('created_at', { ascending: true });
+    const studentsRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/students?order=created_at.asc`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    if (studentsError) {
-      console.error('❌ Error loading students from Supabase:', studentsError);
+    if (!studentsRes.ok) {
+      console.error('❌ Error loading students:', studentsRes.statusText);
       return [];
     }
+
+    const students = await studentsRes.json();
 
     if (!students || students.length === 0) {
       console.log('ℹ️ No students found in Supabase');
       return [];
     }
 
-    // Load physical records for each student
-    const { data: records, error: recordsError } = await supabase
-      .from('physical_records')
-      .select('*')
-      .order('record_date', { ascending: false });
+    // Load physical records
+    const recordsRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/physical_records?order=record_date.desc`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    if (recordsError) {
-      console.warn('⚠️ Error loading physical records:', recordsError);
+    let records = [];
+    if (recordsRes.ok) {
+      records = await recordsRes.json();
     }
 
     // Merge students with their latest physical records
     const members = students.map(student => {
-      // Find latest record for this student
-      const latestRecord = records && records.find(r => r.student_id === student.id);
+      const latestRecord = records.find(r => r.student_id === student.id);
 
       return {
         id: student.id,
@@ -749,32 +738,42 @@ async function loadMembersFromSupabase() {
   }
 }
 
-// Helper function to update member in Supabase
+// Update member in Supabase via REST API
 async function updateMemberInSupabase(member) {
-  if (!isSupabaseReady || !supabase) {
-    console.log('ℹ️ Supabase not available, update saved locally only');
+  if (!isSupabaseReady) {
+    console.log('ℹ️ Supabase not configured, update saved locally only');
     return { success: true, local: true };
   }
 
   try {
     // Update student info
-    const { data: studentData, error: studentError } = await supabase
-      .from('students')
-      .update({
+    const updateRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/students?id=eq.${member.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
         name: member.name,
         gender: member.gender
       })
-      .eq('id', member.id);
+    });
 
-    if (studentError) {
-      console.error('❌ Error updating student in Supabase:', studentError);
-      return { success: false, error: studentError };
+    if (!updateRes.ok) {
+      console.error('❌ Error updating student:', updateRes.statusText);
+      return { success: false };
     }
 
     // Create new physical record with updated data
-    const { data: recordData, error: recordError } = await supabase
-      .from('physical_records')
-      .insert([{
+    const recordRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/physical_records`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
         student_id: member.id,
         record_date: new Date().toISOString().split('T')[0],
         height: member.height,
@@ -784,53 +783,58 @@ async function updateMemberInSupabase(member) {
         pull_ups: member.latest.pullup || 0,
         run12: member.latest.run12 || 0,
         fig8: member.latest.fig8 || 0
-      }]);
+      })
+    });
 
-    if (recordError) {
-      console.warn('⚠️ Updated student but failed to save physical record:', recordError);
-    } else {
+    if (recordRes.ok) {
       console.log('✅ Updated physical record');
     }
 
     console.log('✅ Updated in Supabase');
-    return { success: true, data: studentData };
+    return { success: true };
   } catch (error) {
     console.error('❌ Exception updating in Supabase:', error);
     return { success: false, error };
   }
 }
 
-// Helper function to delete member from Supabase
+// Delete member from Supabase via REST API
 async function deleteMemberFromSupabase(memberId) {
-  if (!isSupabaseReady || !supabase) {
-    console.log('ℹ️ Supabase not available, deletion saved locally only');
+  if (!isSupabaseReady) {
+    console.log('ℹ️ Supabase not configured, deletion saved locally only');
     return { success: true, local: true };
   }
 
   try {
-    // Delete physical records first (foreign key constraint)
-    const { error: recordsError } = await supabase
-      .from('physical_records')
-      .delete()
-      .eq('student_id', memberId);
+    // Delete physical records first
+    const recordsRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/physical_records?student_id=eq.${memberId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Prefer': 'return=minimal'
+      }
+    });
 
-    if (recordsError) {
-      console.warn('⚠️ Failed to delete physical records:', recordsError);
+    if (!recordsRes.ok) {
+      console.warn('⚠️ Failed to delete physical records');
     }
 
     // Delete student
-    const { data, error } = await supabase
-      .from('students')
-      .delete()
-      .eq('id', memberId);
+    const deleteRes = await fetch(`${SUPABASE_CONFIG.URL}/rest/v1/students?id=eq.${memberId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_CONFIG.KEY}`,
+        'Prefer': 'return=minimal'
+      }
+    });
 
-    if (error) {
-      console.error('❌ Error deleting student from Supabase:', error);
-      return { success: false, error };
+    if (!deleteRes.ok) {
+      console.error('❌ Error deleting student:', deleteRes.statusText);
+      return { success: false };
     }
 
     console.log('✅ Deleted from Supabase');
-    return { success: true, data };
+    return { success: true };
   } catch (error) {
     console.error('❌ Exception deleting from Supabase:', error);
     return { success: false, error };
