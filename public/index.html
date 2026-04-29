@@ -588,28 +588,47 @@ tbody tr:last-child td{border-bottom:none}
 
 <script>
 // SUPABASE CONFIGURATION
-// Get these from your Supabase project dashboard: https://supabase.com
-const SUPABASE_CONFIG = {
-  URL: localStorage.getItem('SUPABASE_URL') || 'https://your-project.supabase.co',
-  KEY: localStorage.getItem('SUPABASE_KEY') || 'your-anon-key'
-};
-
 let supabase = null;
 let isSupabaseReady = false;
 
-// Initialize Supabase client
-if (SUPABASE_CONFIG.URL && SUPABASE_CONFIG.URL !== 'https://your-project.supabase.co') {
+// Initialize Supabase client (with retry logic)
+async function initializeSupabase() {
+  const SUPABASE_CONFIG = {
+    URL: localStorage.getItem('SUPABASE_URL') || 'https://your-project.supabase.co',
+    KEY: localStorage.getItem('SUPABASE_KEY') || 'your-anon-key'
+  };
+
+  // Check if credentials are configured
+  if (!SUPABASE_CONFIG.URL || SUPABASE_CONFIG.URL === 'https://your-project.supabase.co') {
+    console.warn('⚠️ Supabase not configured. Data will be stored locally only.');
+    return;
+  }
+
+  // Wait for Supabase library to load (max 5 seconds)
+  let retries = 0;
+  while (!window.supabase && retries < 50) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    retries++;
+  }
+
+  if (!window.supabase) {
+    console.error('❌ Supabase library failed to load');
+    isSupabaseReady = false;
+    return;
+  }
+
   try {
     supabase = window.supabase.createClient(SUPABASE_CONFIG.URL, SUPABASE_CONFIG.KEY);
     isSupabaseReady = true;
-    console.log('✅ Supabase connected');
+    console.log('✅ Supabase connected successfully');
   } catch (error) {
     console.error('❌ Supabase initialization failed:', error);
     isSupabaseReady = false;
   }
-} else {
-  console.warn('⚠️ Supabase not configured. Data will be stored locally only.');
 }
+
+// Initialize immediately
+initializeSupabase();
 
 // Helper function to save member to Supabase
 async function saveMemberToSupabase(member) {
