@@ -232,6 +232,8 @@ tbody tr:last-child td{border-bottom:none}
 .form-select option{background:var(--surface2)}
 
 </style>
+<!-- Supabase SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.48.0/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 
@@ -586,7 +588,12 @@ tbody tr:last-child td{border-bottom:none}
 
 <script>
 // DATA SETUP
-const MEMBERS = [
+// ===== SUPABASE CONFIGURATION =====
+const SUPABASE_URL = 'https://rqqwxanuixiovbvzooqi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_JNOtwf0ms0NJefrhQS4RbA_kDLuZpUm';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let MEMBERS = [
   {id:'M001',name:'Ahmad Kafir',gender:'L',weightInit:68,weightNow:65,height:170,
    latest:{run12:2950,fig8:17.2,pushup:34,situp:40,pullup:12}},
   {id:'M002',name:'Siti Nuraini',gender:'P',weightInit:55,weightNow:53,height:158,
@@ -641,6 +648,136 @@ const MONTHLY_LOG = [
 let currentMember = 0;
 let currentChartTab = 'daily';
 let currentReportTab = 'daily';
+
+// ===== SUPABASE DATA FUNCTIONS =====
+async function loadStudentsFromDB(){
+  try{
+    console.log('Loading students from Supabase...');
+    const {data,error}=await supabase.from('students').select('*');
+    if(error) throw error;
+
+    if(data && data.length>0){
+      MEMBERS=data.map(s=>({
+        id:s.id,
+        db_id:s.id,
+        name:s.name,
+        gender:s.student_id?.includes('L')?'L':'P',
+        studentId:s.student_id,
+        class:s.class,
+        dateOfBirth:s.date_of_birth,
+        weightInit:60,
+        weightNow:60,
+        height:170,
+        latest:{run12:0,fig8:0,pushup:0,situp:0,pullup:0}
+      }));
+      console.log('✅ Loaded',MEMBERS.length,'students from database');
+      await loadLatestRecords();
+    }
+  }catch(err){
+    console.error('Error loading students:',err);
+  }
+}
+
+async function loadLatestRecords(){
+  try{
+    for(let m of MEMBERS){
+      const {data,error}=await supabase
+        .from('physical_records')
+        .select('*')
+        .eq('student_id',m.db_id)
+        .order('record_date',{ascending:false})
+        .limit(1);
+
+      if(error) throw error;
+      if(data && data.length>0){
+        const rec=data[0];
+        m.weightInit=rec.weight||60;
+        m.weightNow=rec.weight||60;
+        m.height=rec.height||170;
+        m.latest={
+          run12:rec.run12||0,
+          fig8:rec.fig8||0,
+          pushup:rec.push_ups||0,
+          situp:rec.sit_ups||0,
+          pullup:rec.pull_ups||0
+        };
+      }
+    }
+    console.log('✅ Loaded latest records for all students');
+    renderInitialUI();
+  }catch(err){
+    console.error('Error loading records:',err);
+  }
+}
+
+async function savePhysicalRecord(studentId,data){
+  try{
+    const {error}=await supabase.from('physical_records').insert([{
+      student_id:studentId,
+      record_date:data.date,
+      height:data.height,
+      weight:data.weight,
+      run12:data.run12,
+      fig8:data.fig8,
+      push_ups:data.pushup,
+      sit_ups:data.situp,
+      pull_ups:data.pullup,
+      sprint_time:data.sprint||null,
+      long_jump:data.longJump||null
+    }]);
+
+    if(error) throw error;
+    console.log('✅ Record saved to database');
+    return true;
+  }catch(err){
+    console.error('Error saving record:',err);
+    return false;
+  }
+}
+
+async function addStudentToDB(name,studentClass,studentId,dateOfBirth,gender){
+  try{
+    const {data,error}=await supabase.from('students').insert([{
+      name,
+      class:studentClass,
+      student_id:studentId,
+      date_of_birth:dateOfBirth
+    }]).select();
+
+    if(error) throw error;
+    console.log('✅ Student added to database',data);
+
+    if(data && data.length>0){
+      const newStudent=data[0];
+      MEMBERS.push({
+        id:newStudent.id,
+        db_id:newStudent.id,
+        name:newStudent.name,
+        gender:gender||'L',
+        studentId:newStudent.student_id,
+        class:newStudent.class,
+        dateOfBirth:newStudent.date_of_birth,
+        weightInit:60,
+        weightNow:60,
+        height:170,
+        latest:{run12:0,fig8:0,pushup:0,situp:0,pullup:0}
+      });
+    }
+
+    return true;
+  }catch(err){
+    console.error('Error adding student:',err);
+    return false;
+  }
+}
+
+async function renderInitialUI(){
+  if(MEMBERS.length>0){
+    selectMember(0);
+    renderMembersList();
+    renderDailySection();
+  }
+}
 
 // HELPERS
 function getTarget(test, gender){return gender==='P'?test.targetF:test.targetM;}
@@ -1073,7 +1210,7 @@ function openModal(){
 function closeModal(){document.getElementById('modal').classList.remove('show')}
 document.getElementById('modal').onclick=e=>{if(e.target===e.currentTarget)closeModal()}
 
-function saveEntry(){
+async function saveEntry(){
   const idx=parseInt(document.getElementById('inputMember').value);
   const m=MEMBERS[idx];
   const r12=parseFloat(document.getElementById('in_run12').value)||m.latest.run12;
@@ -1082,11 +1219,27 @@ function saveEntry(){
   const su=parseInt(document.getElementById('in_situp').value)||m.latest.situp;
   const pl=parseInt(document.getElementById('in_pullup').value)||m.latest.pullup;
   const w=parseFloat(document.getElementById('inputWeight').value)||m.weightNow;
-  m.latest={run12:r12,fig8:f8,pushup:pu,situp:su,pullup:pl}; m.weightNow=w;
-  const score=calcScore(m); const {g}=getGrade(score);
-  DAILY_LOG.unshift({date:'Hari ini',run12:r12,fig8:f8,pushup:pu,situp:su,pullup:pl,score,grade:g});
-  closeModal(); selectMember(idx);
-  alert(`✅ Data berhasil disimpan!\nSkor: ${score} — Grade ${g}`);
+  const h=parseFloat(document.getElementById('inputHeight').value)||m.height;
+  const date=document.getElementById('inputDate').value;
+
+  // Save to Supabase
+  const saved=await savePhysicalRecord(m.db_id,{
+    date,height:h,weight:w,run12:r12,fig8:f8,pushup:pu,situp:su,pullup:pl
+  });
+
+  if(saved){
+    m.latest={run12:r12,fig8:f8,pushup:pu,situp:su,pullup:pl};
+    m.weightNow=w;
+    m.height=h;
+    const score=calcScore(m);
+    const {g}=getGrade(score);
+    DAILY_LOG.unshift({date:'Hari ini',run12:r12,fig8:f8,pushup:pu,situp:su,pullup:pl,score,grade:g});
+    closeModal();
+    selectMember(idx);
+    alert(`✅ Data berhasil disimpan ke cloud!\nSkor: ${score} — Grade ${g}`);
+  }else{
+    alert('❌ Gagal menyimpan data. Silakan coba lagi.');
+  }
 }
 
 function updateBar(el,barId,target){
@@ -1400,71 +1553,62 @@ function closeAddMemberModal(){
   console.log('Modal closed and reset to Add mode');
 }
 
-function saveNewMember(){
+async function saveNewMember(){
   console.log('=== SAVE NEW MEMBER ===');
-  
+
   const name=document.getElementById('newMemberName').value.trim();
   const gender=document.getElementById('newMemberGender').value;
   const weight=parseFloat(document.getElementById('newMemberWeight').value);
   const height=parseFloat(document.getElementById('newMemberHeight').value);
-  
-  console.log('Form data:',{name,gender,weight,height});
-  
+  const studentId=document.getElementById('newMemberStudentId')?.value||'';
+
+  console.log('Form data:',{name,gender,weight,height,studentId});
+
   // Validation
   if(!name){
     alert('⚠️ Nama anggota tidak boleh kosong');
     return;
   }
-  
+
   if(name.length<3){
     alert('⚠️ Nama minimal 3 karakter');
     return;
   }
-  
+
   if(isNaN(weight) || weight<=0){
     alert('⚠️ Berat badan harus angka positif');
     return;
   }
-  
+
   if(isNaN(height) || height<=0){
     alert('⚠️ Tinggi badan harus angka positif');
     return;
   }
-  
+
   if(weight>200 || height>250){
     alert('⚠️ Data tidak valid. Cek kembali berat (max 200kg) dan tinggi (max 250cm)');
     return;
   }
-  
+
   // Check duplicate name
   const isDuplicate=MEMBERS.some(m=>m.name.toLowerCase()===name.toLowerCase());
   if(isDuplicate){
     alert('⚠️ Nama anggota "'+name+'" sudah terdaftar. Gunakan nama yang berbeda');
     return;
   }
-  
-  // Create new member
-  const newId='M'+String(MEMBERS.length+1).padStart(3,'0');
-  const newMember={
-    id:newId,
-    name:name,
-    gender:gender,
-    weightInit:weight,
-    weightNow:weight,
-    height:height,
-    latest:{run12:0,fig8:0,pushup:0,situp:0,pullup:0}
-  };
-  
-  console.log('Creating new member:',newMember);
-  MEMBERS.push(newMember);
-  console.log('✅ Member added. Total members now:',MEMBERS.length);
-  console.log('All members:',MEMBERS.map(m=>({id:m.id,name:m.name})));
-  
-  closeAddMemberModal();
-  renderMembersList();
-  alert('✅ Anggota "'+name+'" berhasil ditambahkan!\n\nID: '+newId+'\nTotal anggota: '+MEMBERS.length);
-  
-  console.log('=== NEW MEMBER SAVED ===');
+
+  // Save to Supabase
+  const saved=await addStudentToDB(name,'Kelas',studentId,null,gender);
+
+  if(saved){
+    closeAddMemberModal();
+    renderMembersList();
+    renderMemberChips();
+    alert('✅ Anggota "'+name+'" berhasil ditambahkan ke cloud!\n\nTotal anggota: '+MEMBERS.length);
+    console.log('=== NEW MEMBER SAVED TO SUPABASE ===');
+  }else{
+    alert('❌ Gagal menambahkan anggota. Silakan coba lagi.');
+  }
 }
 
 function renderMembersList(){
@@ -1693,14 +1837,22 @@ function exportMembers(){
 
 // Search filter
 document.addEventListener('DOMContentLoaded',()=>{
+  console.log('🔄 Initializing app with Supabase...');
   const searchInput=document.getElementById('memberSearch');
   if(searchInput){
     searchInput.addEventListener('keyup',renderMembersList);
   }
+
+  // Load data from Supabase
+  loadStudentsFromDB();
 });
 
-// INIT
-renderMemberChips(); renderProfile(); renderTestCards(); renderChart('daily'); renderRadarChart(); renderReport('daily'); renderMembersList();
+// Fallback init if no Supabase data loads quickly
+setTimeout(()=>{
+  if(MEMBERS.length===0 && document.getElementById('profileName').textContent===''){
+    console.warn('⚠️ No data loaded from Supabase, using defaults');
+  }
+},2000);
 </script>
 </body>
 </html>
