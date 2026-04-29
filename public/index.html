@@ -6,6 +6,7 @@
 <title>Ajiks Akademi — Jasmani Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,600;0,700;0,800;0,900;1,700;1,900&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -585,8 +586,26 @@ tbody tr:last-child td{border-bottom:none}
 </div>
 
 <script>
+// =====================================================================
+// SUPABASE CONFIG
+// Buat tabel di Supabase SQL Editor sebelum pakai:
+//   members: id(text pk), name, gender, weight_init, weight_now, height,
+//            run12, fig8, pushup, situp, pullup, created_at
+//   exercise_logs: id(uuid pk default gen_random_uuid()), member_id(text fk),
+//                  date(date), run12, fig8, pushup, situp, pullup,
+//                  weight_now, score, grade, created_at
+//   RLS: ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+//        ALTER TABLE exercise_logs ENABLE ROW LEVEL SECURITY;
+//        CREATE POLICY "public" ON members FOR ALL USING (true) WITH CHECK (true);
+//        CREATE POLICY "public" ON exercise_logs FOR ALL USING (true) WITH CHECK (true);
+// =====================================================================
+const SUPABASE_URL = 'https://rqqwxanuixiovbvzooqi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_JNOtwf0ms0NJefrhQS4Rba_kDLuzpUm';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let supabaseReady = false;
+
 // DATA SETUP
-const MEMBERS = [
+const DEMO_MEMBERS = [
   {id:'M001',name:'Ahmad Kafir',gender:'L',weightInit:68,weightNow:65,height:170,
    latest:{run12:2950,fig8:17.2,pushup:34,situp:40,pullup:12}},
   {id:'M002',name:'Siti Nuraini',gender:'P',weightInit:55,weightNow:53,height:158,
@@ -594,6 +613,7 @@ const MEMBERS = [
   {id:'M003',name:'Budi Pratama',gender:'L',weightInit:72,weightNow:69,height:175,
    latest:{run12:3100,fig8:16.8,pushup:38,situp:43,pullup:15}},
 ];
+let MEMBERS = [];
 
 const TESTS = [
   {key:'run12',name:'Lari 12 Menit',icon:'🏃',unit:'m',targetM:3200,targetF:3200,higherBetter:true},
@@ -603,14 +623,14 @@ const TESTS = [
   {key:'pullup',name:'Pull Up',icon:'🏋️',unit:'rep',targetM:17,targetF:72,higherBetter:true},
 ];
 
-const DAILY_DATA = {
+let DAILY_DATA = {
   run12:[2200,2400,2600,2700,2850,2900,2950],
   fig8:[21,20.5,19.8,18.9,18.2,17.8,17.2],
   pushup:[22,25,28,30,32,33,34],
   situp:[28,30,33,35,37,39,40],
   pullup:[6,7,8,9,10,11,12],
 };
-const WEEKLY_DATA = {
+let WEEKLY_DATA = {
   labels:['Mg 1','Mg 2','Mg 3','Mg 4','Mg 5','Mg 6','Mg 7'],
   run12:[2100,2350,2550,2700,2820,2900,2950],
   fig8:[22,21,20,19.5,18.5,17.8,17.2],
@@ -618,7 +638,7 @@ const WEEKLY_DATA = {
   situp:[22,27,31,34,37,39,40],
   pullup:[4,6,8,9,10,11,12],
 };
-const MONTHLY_DATA = {
+let MONTHLY_DATA = {
   labels:['Jan','Feb','Mar','Apr'],
   run12:[2000,2400,2750,2950],
   fig8:[23,21,19,17.2],
@@ -627,21 +647,109 @@ const MONTHLY_DATA = {
   pullup:[3,6,9,12],
 };
 
-const DAILY_LOG = [
-  {date:'29 Apr',run12:2950,fig8:17.2,pushup:34,situp:40,pullup:12,score:74,grade:'B'},
-  {date:'28 Apr',run12:2900,fig8:17.5,pushup:33,situp:39,pullup:11,score:71,grade:'B'},
-];
-const WEEKLY_LOG = [
-  {period:'Minggu 4',run12:2900,fig8:17.5,pushup:33,situp:39,pullup:11,score:71,grade:'B',delta:'+8'},
-];
-const MONTHLY_LOG = [
-  {period:'April 2026',run12:2950,fig8:17.2,pushup:34,situp:40,pullup:12,score:74,grade:'B',delta:'+21'},
-];
+let DAILY_LOG = [];
+let WEEKLY_LOG = [];
+let MONTHLY_LOG = [];
 
 let currentMember = 0;
 let currentChartTab = 'daily';
 let currentReportTab = 'daily';
 
+// =====================================================================
+// SUPABASE HELPERS
+// =====================================================================
+
+function showDbStatus(msg, type='info'){
+  let el=document.getElementById('db-status-bar');
+  if(!el){
+    el=document.createElement('div');
+    el.id='db-status-bar';
+    el.style.cssText='position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 20px;border-radius:4px;font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:1px;text-align:center;transition:opacity 0.5s';
+    document.body.appendChild(el);
+  }
+  const colors={info:'background:#1A0C08;border:1px solid #FF6500;color:#FFB300',
+                 ok:'background:#0a2010;border:1px solid #00E676;color:#00E676',
+                 err:'background:#200a0a;border:1px solid #FF4500;color:#FF4500'};
+  el.style.cssText+=';'+colors[type]||colors.info;
+  el.textContent=msg;
+  el.style.opacity='1';
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>{el.style.opacity='0';},3000);
+}
+
+function rowToMember(r){
+  return {
+    id: r.id,
+    name: r.name,
+    gender: r.gender,
+    weightInit: r.weight_init,
+    weightNow: r.weight_now,
+    height: r.height,
+    latest: {run12:r.run12||0, fig8:r.fig8||0, pushup:r.pushup||0, situp:r.situp||0, pullup:r.pullup||0}
+  };
+}
+
+async function loadMembers(){
+  const {data,error}=await sb.from('members').select('*').order('created_at',{ascending:true});
+  if(error){
+    console.error('Supabase loadMembers error:',error.message);
+    MEMBERS=DEMO_MEMBERS.map(m=>({...m}));
+    supabaseReady=false;
+    showDbStatus('⚠️ DB offline — pakai data demo','err');
+    return;
+  }
+  MEMBERS=data.map(rowToMember);
+  supabaseReady=true;
+  showDbStatus('✅ Terhubung ke Supabase — '+MEMBERS.length+' anggota',type='ok');
+  console.log('✅ Supabase connected. Members:',MEMBERS.length);
+}
+
+async function loadMemberLogs(memberId){
+  if(!supabaseReady) return;
+  const {data,error}=await sb.from('exercise_logs')
+    .select('*')
+    .eq('member_id',memberId)
+    .order('date',{ascending:true});
+  if(error || !data || data.length===0) return;
+
+  const keys=['run12','fig8','pushup','situp','pullup'];
+  const last7=data.slice(-7);
+  keys.forEach(k=>{DAILY_DATA[k]=last7.map(r=>r[k]||0);});
+
+  const byWeek={};
+  data.forEach(r=>{
+    const d=new Date(r.date);
+    const wk='Mg '+Math.ceil(d.getDate()/7);
+    if(!byWeek[wk]) byWeek[wk]={};
+    keys.forEach(k=>{byWeek[wk][k]=(byWeek[wk][k]||0);byWeek[wk][k]=r[k]||0;});
+  });
+  const weekLabels=Object.keys(byWeek).slice(-7);
+  WEEKLY_DATA={labels:weekLabels};
+  keys.forEach(k=>{WEEKLY_DATA[k]=weekLabels.map(l=>byWeek[l][k]||0);});
+
+  const byMonth={};
+  data.forEach(r=>{
+    const d=new Date(r.date);
+    const mo=d.toLocaleDateString('id-ID',{month:'short',year:'numeric'});
+    if(!byMonth[mo]) byMonth[mo]={};
+    keys.forEach(k=>{byMonth[mo][k]=r[k]||0;});
+  });
+  const moLabels=Object.keys(byMonth).slice(-6);
+  MONTHLY_DATA={labels:moLabels};
+  keys.forEach(k=>{MONTHLY_DATA[k]=moLabels.map(l=>byMonth[l][k]||0);});
+
+  DAILY_LOG=data.slice(-10).reverse().map(r=>{
+    const score=calcScore({gender:r.gender||MEMBERS.find(m=>m.id===memberId)?.gender||'L',latest:{run12:r.run12,fig8:r.fig8,pushup:r.pushup,situp:r.situp,pullup:r.pullup}});
+    const {g}=getGrade(score);
+    const d=new Date(r.date);
+    return {date:d.toLocaleDateString('id-ID',{day:'numeric',month:'short'}),
+            run12:r.run12,fig8:r.fig8,pushup:r.pushup,situp:r.situp,pullup:r.pullup,score,grade:g};
+  });
+  WEEKLY_LOG=[];
+  MONTHLY_LOG=[];
+}
+
+// =====================================================================
 // HELPERS
 function getTarget(test, gender){return gender==='P'?test.targetF:test.targetM;}
 // =======================================================================
@@ -801,6 +909,7 @@ function renderMemberChips(){
 
 function renderProfile(){
   const m=MEMBERS[currentMember];
+  if(!m) return;
   const bmi=(m.weightNow/((m.height/100)**2)).toFixed(1);
   const bmiStatus=bmi<18.5?'Kurus':bmi<25?'Normal':bmi<30?'Gemuk':'Obesitas';
   const bmiColor=bmi<18.5?'var(--gold-dim)':bmi<25?'var(--green)':bmi<30?'var(--fire)':`var(--fire-dark)`;
@@ -837,6 +946,7 @@ function renderProfile(){
 
 function renderTestCards(){
   const m=MEMBERS[currentMember];
+  if(!m) return;
   document.getElementById('testCards').innerHTML=TESTS.map(t=>{
     const val=m.latest[t.key];
     const pct=calcPct(t,val,m.gender);
@@ -878,6 +988,7 @@ function renderTestCards(){
 
 function renderChart(type){
   const m=MEMBERS[currentMember];
+  if(!m) return;
   const data=type==='daily'?DAILY_DATA:type==='weekly'?WEEKLY_DATA:MONTHLY_DATA;
   const labels=type==='daily'?['S','S','R','K','J','S','M']:data.labels;
   const colors=['#FF4500','#FFB300','#00E676','#FF6500','#B33000'];
@@ -935,6 +1046,7 @@ function renderReport(type){
   const isWeekly=type==='weekly';
   const data=isDaily?DAILY_LOG:isWeekly?WEEKLY_LOG:MONTHLY_LOG;
   const m=MEMBERS[currentMember];
+  if(!m) return;
   const periodLabel=isDaily?'Harian':isWeekly?'Mingguan':'Bulanan';
   document.getElementById('reportTitle').textContent=`Log ${periodLabel} — ${m.name}`;
 
@@ -952,6 +1064,7 @@ function renderReport(type){
 
 function renderRadarChart(){
   const m=MEMBERS[currentMember];
+  if(!m) return;
   const dataPoints=TESTS.map(t=>calcPct(t,m.latest[t.key],m.gender));
   
   setTimeout(()=>{
@@ -1059,7 +1172,13 @@ function resetStopwatch(){
 }
 
 // ACTIONS
-function selectMember(i){ currentMember=i; renderMemberChips(); renderProfile(); renderTestCards(); renderChart(currentChartTab); renderRadarChart(); renderReport(currentReportTab); }
+async function selectMember(i){
+  currentMember=i;
+  if(supabaseReady && MEMBERS[i]){
+    await loadMemberLogs(MEMBERS[i].id);
+  }
+  renderMemberChips(); renderProfile(); renderTestCards(); renderChart(currentChartTab); renderRadarChart(); renderReport(currentReportTab);
+}
 function setChartTab(el,type){ document.querySelectorAll('.tabs:nth-of-type(1) .tab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); currentChartTab=type; renderChart(type); }
 function setReportTab(el,type){ el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); currentReportTab=type; renderReport(type); }
 
@@ -1073,7 +1192,7 @@ function openModal(){
 function closeModal(){document.getElementById('modal').classList.remove('show')}
 document.getElementById('modal').onclick=e=>{if(e.target===e.currentTarget)closeModal()}
 
-function saveEntry(){
+async function saveEntry(){
   const idx=parseInt(document.getElementById('inputMember').value);
   const m=MEMBERS[idx];
   const r12=parseFloat(document.getElementById('in_run12').value)||m.latest.run12;
@@ -1086,6 +1205,26 @@ function saveEntry(){
   const score=calcScore(m); const {g}=getGrade(score);
   DAILY_LOG.unshift({date:'Hari ini',run12:r12,fig8:f8,pushup:pu,situp:su,pullup:pl,score,grade:g});
   closeModal(); selectMember(idx);
+
+  if(supabaseReady){
+    const today=new Date().toISOString().split('T')[0];
+    const [logRes, memberRes]=await Promise.all([
+      sb.from('exercise_logs').insert({
+        member_id:m.id, date:today,
+        run12:r12, fig8:f8, pushup:pu, situp:su, pullup:pl,
+        weight_now:w, score:Math.round(score), grade:g
+      }),
+      sb.from('members').update({
+        weight_now:w, run12:r12, fig8:f8, pushup:pu, situp:su, pullup:pl
+      }).eq('id',m.id)
+    ]);
+    if(logRes.error || memberRes.error){
+      console.error('Supabase saveEntry error:',logRes.error||memberRes.error);
+      showDbStatus('⚠️ Gagal simpan ke DB — data hanya di memori','err');
+    } else {
+      showDbStatus('✅ Data latihan tersimpan ke Supabase','ok');
+    }
+  }
   alert(`✅ Data berhasil disimpan!\nSkor: ${score} — Grade ${g}`);
 }
 
@@ -1400,7 +1539,7 @@ function closeAddMemberModal(){
   console.log('Modal closed and reset to Add mode');
 }
 
-function saveNewMember(){
+async function saveNewMember(){
   console.log('=== SAVE NEW MEMBER ===');
   
   const name=document.getElementById('newMemberName').value.trim();
@@ -1456,14 +1595,30 @@ function saveNewMember(){
   };
   
   console.log('Creating new member:',newMember);
+
+  if(supabaseReady){
+    const {error}=await sb.from('members').insert({
+      id:newId, name:name, gender:gender,
+      weight_init:weight, weight_now:weight, height:height,
+      run12:0, fig8:0, pushup:0, situp:0, pullup:0
+    });
+    if(error){
+      console.error('Supabase insert error:',error);
+      alert('❌ Gagal simpan ke database:\n'+error.message);
+      return;
+    }
+    showDbStatus('✅ Anggota disimpan ke Supabase','ok');
+  } else {
+    showDbStatus('⚠️ Offline — anggota disimpan sementara','err');
+  }
+
   MEMBERS.push(newMember);
   console.log('✅ Member added. Total members now:',MEMBERS.length);
-  console.log('All members:',MEMBERS.map(m=>({id:m.id,name:m.name})));
-  
+
   closeAddMemberModal();
   renderMembersList();
   alert('✅ Anggota "'+name+'" berhasil ditambahkan!\n\nID: '+newId+'\nTotal anggota: '+MEMBERS.length);
-  
+
   console.log('=== NEW MEMBER SAVED ===');
 }
 
@@ -1550,7 +1705,7 @@ function editMember(id){
   openAddMemberModal();
 }
 
-function updateMemberData(id){
+async function updateMemberData(id){
   console.log('Updating member ID:',id);
   
   const member=MEMBERS.find(m=>m.id===id);
@@ -1589,21 +1744,31 @@ function updateMemberData(id){
     return;
   }
   
-  // Update member
+  if(supabaseReady){
+    const {error}=await sb.from('members').update({
+      name:newName, gender:newGender, weight_now:newWeight, height:newHeight
+    }).eq('id',id);
+    if(error){
+      alert('❌ Gagal update database:\n'+error.message);
+      return;
+    }
+    showDbStatus('✅ Data anggota diupdate ke Supabase','ok');
+  }
+
   member.name=newName;
   member.gender=newGender;
   member.weightNow=newWeight;
   member.height=newHeight;
-  
+
   console.log('✅ Member updated:',member);
-  
+
   closeAddMemberModal();
   renderMembersList();
   selectMember(currentMember);
   alert('✅ Data anggota "'+newName+'" berhasil diupdate');
 }
 
-function deleteMember(id){
+async function deleteMember(id){
   console.log('=== DELETE MEMBER DEBUG ===');
   console.log('Deleting member ID:',id);
   console.log('Current MEMBERS array length:',MEMBERS.length);
@@ -1632,6 +1797,14 @@ function deleteMember(id){
   }
   
   try {
+    if(supabaseReady){
+      const {error}=await sb.from('members').delete().eq('id',id);
+      if(error){
+        alert('❌ Gagal hapus dari database:\n'+error.message);
+        return;
+      }
+      showDbStatus('✅ Anggota dihapus dari Supabase','ok');
+    }
     // Remove from array
     const removedMembers=MEMBERS.splice(memberIndex,1);
     console.log('✅ Member removed. Removed:',removedMembers[0].name);
@@ -1694,13 +1867,25 @@ function exportMembers(){
 // Search filter
 document.addEventListener('DOMContentLoaded',()=>{
   const searchInput=document.getElementById('memberSearch');
-  if(searchInput){
-    searchInput.addEventListener('keyup',renderMembersList);
-  }
+  if(searchInput) searchInput.addEventListener('keyup',renderMembersList);
 });
 
 // INIT
-renderMemberChips(); renderProfile(); renderTestCards(); renderChart('daily'); renderRadarChart(); renderReport('daily'); renderMembersList();
+async function initApp(){
+  showDbStatus('⏳ Menghubungkan ke Supabase...','info');
+  await loadMembers();
+  if(MEMBERS.length>0){
+    currentMember=0;
+    await loadMemberLogs(MEMBERS[0].id);
+  }
+  renderMemberChips();
+  if(MEMBERS.length>0){
+    renderProfile(); renderTestCards(); renderChart('daily'); renderRadarChart(); renderReport('daily');
+  }
+  renderMembersList();
+  console.log('✅ POLRI Engine loaded - Sistem penilaian profesional POLRI');
+}
+initApp();
 </script>
 </body>
 </html>
