@@ -659,22 +659,96 @@ let currentReportTab = 'daily';
 // SUPABASE HELPERS
 // =====================================================================
 
-function showDbStatus(msg, type='info'){
+function showDbStatus(msg, type='info', sticky=false){
   let el=document.getElementById('db-status-bar');
   if(!el){
     el=document.createElement('div');
     el.id='db-status-bar';
-    el.style.cssText='position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 20px;border-radius:4px;font-family:Barlow Condensed,sans-serif;font-size:14px;font-weight:700;letter-spacing:1px;text-align:center;transition:opacity 0.5s';
+    el.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:10px 20px;font-family:Barlow Condensed,sans-serif;font-size:13px;font-weight:700;letter-spacing:1px;text-align:center;transition:opacity 0.4s;white-space:pre-wrap;line-height:1.4';
     document.body.appendChild(el);
   }
-  const colors={info:'background:#1A0C08;border:1px solid #FF6500;color:#FFB300',
-                 ok:'background:#0a2010;border:1px solid #00E676;color:#00E676',
-                 err:'background:#200a0a;border:1px solid #FF4500;color:#FF4500'};
-  el.style.cssText+=';'+colors[type]||colors.info;
+  const colors={
+    info:'background:#1A0C08;border-top:2px solid #FF6500;color:#FFB300',
+    ok:'background:#071408;border-top:2px solid #00E676;color:#00E676',
+    err:'background:#1a0505;border-top:2px solid #FF4500;color:#FF6060'
+  };
+  el.setAttribute('style',el.style.cssText+';'+colors[type]);
   el.textContent=msg;
   el.style.opacity='1';
   clearTimeout(el._t);
-  el._t=setTimeout(()=>{el.style.opacity='0';},3000);
+  if(!sticky) el._t=setTimeout(()=>{el.style.opacity='0';},4000);
+}
+
+function setNavStatus(state){
+  let dot=document.getElementById('db-nav-dot');
+  if(!dot){
+    const nav=document.querySelector('nav');
+    if(!nav) return;
+    dot=document.createElement('div');
+    dot.id='db-nav-dot';
+    dot.style.cssText='display:flex;align-items:center;gap:6px;font-family:Barlow Condensed,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;cursor:pointer;padding:4px 10px;border-radius:3px;border:1px solid transparent';
+    dot.title='Klik untuk cek status DB';
+    dot.onclick=()=>diagnoseSupa();
+    nav.appendChild(dot);
+  }
+  const s={
+    connecting:{dot:'🟡',label:'CONNECTING',style:'border-color:#FF6500;color:#FF6500'},
+    ok:{dot:'🟢',label:'SUPABASE',style:'border-color:#00E676;color:#00E676'},
+    err:{dot:'🔴',label:'DB OFFLINE',style:'border-color:#FF4500;color:#FF4500'}
+  }[state]||{dot:'⚪',label:'UNKNOWN',style:''};
+  dot.innerHTML=s.dot+' <span>'+s.label+'</span>';
+  dot.style.cssText=dot.style.cssText.replace(/border-color:[^;]+;color:[^;]+/,'');
+  dot.setAttribute('style','display:flex;align-items:center;gap:6px;font-family:Barlow Condensed,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;cursor:pointer;padding:4px 10px;border-radius:3px;border:1px solid transparent;'+s.style);
+}
+
+async function diagnoseSupa(){
+  console.group('🔍 Supabase Diagnosis');
+  console.log('URL:',SUPABASE_URL);
+  console.log('Key prefix:',SUPABASE_KEY.slice(0,20)+'...');
+  console.log('supabase object:',typeof sb);
+
+  showDbStatus('🔍 Mendiagnosis koneksi Supabase...','info',true);
+  setNavStatus('connecting');
+
+  // Test 1: network ping
+  try{
+    const res=await fetch(SUPABASE_URL+'/rest/v1/',{
+      headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}
+    });
+    console.log('REST ping status:',res.status,res.statusText);
+    if(res.status===401){
+      showDbStatus('❌ API Key tidak valid atau expired.\nPeriksa key di Supabase Dashboard → Settings → API','err',true);
+      setNavStatus('err');console.groupEnd();return;
+    }
+  }catch(e){
+    console.error('Network error:',e);
+    showDbStatus('❌ Tidak bisa reach Supabase.\nCek koneksi internet.\nError: '+e.message,'err',true);
+    setNavStatus('err');console.groupEnd();return;
+  }
+
+  // Test 2: table members
+  const {data:td,error:te}=await sb.from('members').select('id').limit(1);
+  if(te){
+    console.error('members table error:',te);
+    const isNoTable=te.message&&(te.message.includes('does not exist')||te.message.includes('relation')||te.code==='42P01'||te.code==='PGRST116');
+    if(isNoTable){
+      showDbStatus('❌ Tabel "members" belum ada di Supabase!\nBuka Supabase SQL Editor → jalankan SQL yang ada di komentar di kode.\nError: '+te.message,'err',true);
+    } else {
+      showDbStatus('❌ Error tabel members: '+te.message+' (code: '+te.code+')','err',true);
+    }
+    setNavStatus('err');console.groupEnd();return;
+  }
+
+  // All OK - reload
+  console.log('✅ Diagnosis OK — reloading members');
+  console.groupEnd();
+  await loadMembers();
+  if(supabaseReady && MEMBERS.length>0){
+    currentMember=0;
+    await loadMemberLogs(MEMBERS[0].id);
+    renderMemberChips();renderProfile();renderTestCards();renderChart(currentChartTab);renderRadarChart();renderReport(currentReportTab);
+    renderMembersList();
+  }
 }
 
 function rowToMember(r){
@@ -690,18 +764,51 @@ function rowToMember(r){
 }
 
 async function loadMembers(){
-  const {data,error}=await sb.from('members').select('*').order('created_at',{ascending:true});
-  if(error){
-    console.error('Supabase loadMembers error:',error.message);
+  if(typeof window.supabase==='undefined'||!sb){
+    console.error('❌ Supabase SDK tidak loaded!');
     MEMBERS=DEMO_MEMBERS.map(m=>({...m}));
     supabaseReady=false;
-    showDbStatus('⚠️ DB offline — pakai data demo','err');
+    showDbStatus('❌ Supabase SDK gagal load. Cek koneksi internet.','err',true);
+    setNavStatus('err');
     return;
   }
+
+  console.log('🔌 Mencoba koneksi Supabase...',SUPABASE_URL);
+  const {data,error}=await sb.from('members').select('*').order('created_at',{ascending:true});
+
+  if(error){
+    console.error('❌ Supabase error:',error);
+    console.error('   code:',error.code,'message:',error.message,'details:',error.details,'hint:',error.hint);
+    MEMBERS=DEMO_MEMBERS.map(m=>({...m}));
+    supabaseReady=false;
+
+    const isNoTable=error.message&&(
+      error.message.includes('does not exist')||
+      error.message.includes('relation')||
+      error.code==='42P01'||error.code==='PGRST116'
+    );
+    const isAuth=error.message&&(
+      error.message.toLowerCase().includes('jwt')||
+      error.message.toLowerCase().includes('auth')||
+      error.message.toLowerCase().includes('invalid')||
+      error.code==='401'
+    );
+
+    let hint='';
+    if(isNoTable) hint='\n→ Buka Supabase SQL Editor & buat tabel dulu (lihat komentar di kode)';
+    else if(isAuth) hint='\n→ Periksa SUPABASE_KEY di kode — pastikan key "anon/public" yang benar';
+    else hint='\n→ Klik dot merah di nav untuk diagnosis lengkap';
+
+    showDbStatus('❌ Supabase gagal: '+error.message+hint,'err',true);
+    setNavStatus('err');
+    return;
+  }
+
   MEMBERS=data.map(rowToMember);
   supabaseReady=true;
-  showDbStatus('✅ Terhubung ke Supabase — '+MEMBERS.length+' anggota',type='ok');
-  console.log('✅ Supabase connected. Members:',MEMBERS.length);
+  console.log('✅ Supabase connected! Members:',MEMBERS.length);
+  showDbStatus('✅ Terhubung ke Supabase — '+MEMBERS.length+' anggota dimuat','ok');
+  setNavStatus('ok');
 }
 
 async function loadMemberLogs(memberId){
@@ -1872,11 +1979,12 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 // INIT
 async function initApp(){
-  showDbStatus('⏳ Menghubungkan ke Supabase...','info');
+  setNavStatus('connecting');
+  showDbStatus('⏳ Menghubungkan ke Supabase...','info',true);
   await loadMembers();
   if(MEMBERS.length>0){
     currentMember=0;
-    await loadMemberLogs(MEMBERS[0].id);
+    if(supabaseReady) await loadMemberLogs(MEMBERS[0].id);
   }
   renderMemberChips();
   if(MEMBERS.length>0){
